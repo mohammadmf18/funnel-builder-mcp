@@ -1,45 +1,31 @@
-"""
-mcp_server.py
-MCP Server يعرض أدوات بناء الفنلات التسويقية للعملاء اللي يدعمون
-Model Context Protocol (مثل Claude Desktop).
+"""stdio MCP adapter using the same JSON schemas and dispatcher as the HTTP API."""
+import asyncio
+import json
 
-تشغيل محلي:
-    python mcp_server.py
-
-إعداد Claude Desktop (claude_desktop_config.json):
-{
-  "mcpServers": {
-    "funnel-builder": {
-      "command": "python",
-      "args": ["/المسار-الكامل/funnel-builder-mcp/mcp_server.py"]
-    }
-  }
-}
-"""
-
-try:
-    # mcp >= 2.0
-    from mcp.server.mcpserver import MCPServer as _MCPServerClass
-except ImportError:
-    # mcp < 2.0 (FastMCP القديم)
-    from mcp.server.fastmcp import FastMCP as _MCPServerClass
+from mcp.server import Server
+from mcp.server.stdio import stdio_server
+from mcp.types import TextContent, Tool
 
 import schemas
 
-mcp = _MCPServerClass("funnel-builder")
+mcp = Server("funnel-builder")
 
 
-def _register_tool(tool_def):
-    """يسجّل كل أداة من schemas.TOOLS كأداة MCP فعلية، بنفس الاسم والوصف."""
-
-    func = tool_def["func"]
-    func.__doc__ = tool_def["description"]
-    mcp.tool(name=tool_def["name"], description=tool_def["description"])(func)
+@mcp.list_tools()
+async def list_tools():
+    return [Tool(name=t["name"], description=t["description"], inputSchema=t["parameters"]) for t in schemas.TOOLS]
 
 
-for tool_def in schemas.TOOLS:
-    _register_tool(tool_def)
+@mcp.call_tool()
+async def call_tool(name: str, arguments: dict):
+    result = await asyncio.to_thread(schemas.call_tool, name, arguments)
+    return [TextContent(type="text", text=json.dumps(result, ensure_ascii=False))]
+
+
+async def main():
+    async with stdio_server() as (reader, writer):
+        await mcp.run(reader, writer, mcp.create_initialization_options())
 
 
 if __name__ == "__main__":
-    mcp.run(transport="stdio")
+    asyncio.run(main())

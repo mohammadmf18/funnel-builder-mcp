@@ -19,14 +19,14 @@ import schemas
 
 client = OpenAI(api_key=os.environ.get("OPENAI_API_KEY"))
 
-MODEL = "gpt-4o"
+MODEL = os.environ.get("OPENAI_MODEL", "gpt-4o")
 
 
 def run(user_message: str):
     messages = [{"role": "user", "content": user_message}]
     tools = schemas.to_openai_functions()
 
-    while True:
+    for _ in range(12):
         response = client.chat.completions.create(
             model=MODEL,
             messages=messages,
@@ -42,10 +42,10 @@ def run(user_message: str):
 
         for tool_call in msg.tool_calls:
             name = tool_call.function.name
-            arguments = json.loads(tool_call.function.arguments)
-            print(f"[تنفيذ أداة] {name}({arguments})")
+            print(f"[تنفيذ أداة] {name}")
 
             try:
+                arguments = json.loads(tool_call.function.arguments)
                 result = schemas.call_tool(name, arguments)
             except Exception as e:
                 result = {"error": str(e)}
@@ -58,10 +58,12 @@ def run(user_message: str):
                 }
             )
 
+    raise RuntimeError("تجاوز التنفيذ 12 جولة من استدعاء الأدوات")
+
 
 if __name__ == "__main__":
     run(
-        "ابنيلي فنل اسمه 'كورس التسويق الرقمي'، هدفه بيع كورس أونلاين بسعر 499 ريال. "
-        "ضيف له صفحة هبوط جذابة، وصفحة تحصيل إيميلات مع هدية كتاب مجاني، "
-        "وصفحة بيع تشرح 3 فوائد، وصفحة دفع، ثم انشر الفنل."
+        "ابنيلي فنل اسمه 'أخبار التسويق الرقمي'، هدفه جمع الاشتراكات. "
+        "ضيف صفحة هبوط ثم صفحة تسجيل إيميل ثم صفحة شكر، وانشر الفنل. "
+        "وضّح أن تشغيل api_server مطلوب لفتح الرابط وحفظ الاشتراكات."
     )
