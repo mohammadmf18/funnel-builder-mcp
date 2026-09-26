@@ -5,6 +5,14 @@ core.py
 """
 
 import json
+import os
+import re
+import shutil
+import tempfile
+from pathlib import Path
+
+from email_validator import validate_email, EmailNotValidError
+from validation import validate, validate_content, TEXT, PRICE, EMAILS
 from typing import Optional
 
 from db import get_conn, init_db, new_id, row_to_dict, _now
@@ -20,6 +28,8 @@ VALID_PAGE_TYPES = {"landing", "optin", "sales", "checkout", "upsell", "thankyou
 # ---------------------------------------------------------------------------
 
 def create_funnel(name: str, goal: str = "") -> dict:
+    validate({**TEXT, "minLength": 1, "pattern": r"\S"}, name)
+    validate(TEXT, goal)
     fid = new_id("funnel")
     now = _now()
     with get_conn() as conn:
@@ -63,6 +73,7 @@ def delete_funnel(funnel_id: str) -> dict:
         cur = conn.execute("DELETE FROM funnels WHERE id = ?", (funnel_id,))
         if cur.rowcount == 0:
             raise ValueError(f"funnel {funnel_id} غير موجود")
+    shutil.rmtree(site_root() / funnel_id, ignore_errors=True)
     return {"funnel_id": funnel_id, "deleted": True}
 
 
@@ -74,6 +85,10 @@ def _add_page(funnel_id: str, page_type: str, headline: str, content: dict, slug
     if page_type not in VALID_PAGE_TYPES:
         raise ValueError(f"نوع صفحة غير معروف: {page_type}. الأنواع المسموحة: {sorted(VALID_PAGE_TYPES)}")
 
+    validate(TEXT, headline)
+    validate_content(page_type, content)
+    if slug is not None and not re.fullmatch(r"[a-zA-Z0-9_-]+", slug):
+        raise ValueError("slug غير صالح")
     with get_conn() as conn:
         f = conn.execute("SELECT id FROM funnels WHERE id = ?", (funnel_id,)).fetchone()
         if not f:
@@ -109,16 +124,16 @@ def add_sales_page(funnel_id: str, headline: str, benefits: list, price: float, 
     return _add_page(funnel_id, "sales", headline, {"benefits": benefits, "price": price, "currency": currency})
 
 
-def add_checkout_page(funnel_id: str, product_name: str, price: float, currency: str = "SAR") -> dict:
+def add_checkout_page(funnel_id: str, product_name: str, price: float, currency: str = "SAR", checkout_url: str = "") -> dict:
     return _add_page(
         funnel_id, "checkout", f"إتمام الشراء: {product_name}",
-        {"product_name": product_name, "price": price, "currency": currency},
+        {"product_name": product_name, "price": price, "currency": currency, "checkout_url": checkout_url},
     )
 
 
-def add_upsell_page(funnel_id: str, product_name: str, price: float, headline: str = "", currency: str = "SAR") -> dict:
+def add_upsell_page(funnel_id: str, product_name: str, price: float, headline: str = "", currency: str = "SAR", checkout_url: str = "") -> dict:
     headline = headline or f"عرض خاص: {product_name}"
-    return _add_page(funnel_id, "upsell", headline, {"product_name": product_name, "price": price, "currency": currency})
+    return _add_page(funnel_id, "upsell", headline, {"product_name": product_name, "price": price, "currency": currency, "checkout_url": checkout_url})
 
 
 def add_thankyou_page(funnel_id: str, headline: str = "شكرًا لك!", message: str = "") -> dict:
@@ -132,8 +147,11 @@ def update_page(page_id: str, headline: Optional[str] = None, content: Optional[
             raise ValueError(f"page {page_id} غير موجودة")
         new_headline = headline if headline is not None else p["headline"]
         merged_content = json.loads(p["content_json"])
-        if content:
+        validate(TEXT, new_headline)
+        if content is not None:
+            validate_content(p["type"], content)
             merged_content.update(content)
+        validate_content(p["type"], merged_content)
         conn.execute(
             "UPDATE pages SET headline = ?, content_json = ?, updated_at = ? WHERE id = ?",
             (new_headline, json.dumps(merged_content, ensure_ascii=False), _now(), page_id),
@@ -147,8 +165,10 @@ def update_page(page_id: str, headline: Optional[str] = None, content: Optional[
 
 def connect_email_sequence(funnel_id: str, list_name: str, emails: list) -> dict:
     """
-    emails: قائمة رسائل، كل رسالة dict فيها subject و body و delay_days
+    يحفظ مسودة تسلسل رسائل فقط؛ لا يرسل أو يجدول رسائل.
     """
+    validate(TEXT, list_name)
+    validate(EMAILS, emails)
     with get_conn() as conn:
         f = conn.execute("SELECT id FROM funnels WHERE id = ?", (funnel_id,)).fetchone()
         if not f:
@@ -158,30 +178,36 @@ def connect_email_sequence(funnel_id: str, list_name: str, emails: list) -> dict
             "INSERT INTO email_sequences (id, funnel_id, list_name, emails_json, created_at) VALUES (?, ?, ?, ?, ?)",
             (sid, funnel_id, list_name, json.dumps(emails, ensure_ascii=False), _now()),
         )
-    return {"sequence_id": sid, "funnel_id": funnel_id, "list_name": list_name, "emails_count": len(emails)}
+    return {"sequence_id": sid, "funnel_id": funnel_id, "list_name": list_name, "emails_count": len(emails), "status": "draft", "sending_enabled": False}
 
 
 # ---------------------------------------------------------------------------
 # الأحداث والتحليلات
 # ---------------------------------------------------------------------------
 
-def record_event(funnel_id: str, event_type: str, page_id: Optional[str] = None, value: float = 0) -> dict:
+def record_event(funnel_id: str, event_type: str, page_id: Optional[str] = None, value: float = 0, visitor_id: Optional[str] = None) -> dict:
     valid_events = {"visit", "optin", "purchase", "upsell_purchase"}
     if event_type not in valid_events:
         raise ValueError(f"نوع حدث غير معروف: {event_type}. الأنواع المسموحة: {sorted(valid_events)}")
+    validate(PRICE, value)
     eid = new_id("evt")
     with get_conn() as conn:
+        if not conn.execute("SELECT id FROM funnels WHERE id = ?", (funnel_id,)).fetchone():
+            raise ValueError("الفنل غير موجود")
+        if page_id is not None and not conn.execute("SELECT id FROM pages WHERE id = ? AND funnel_id = ?", (page_id, funnel_id)).fetchone():
+            raise ValueError("الصفحة لا تنتمي لهذا الفنل")
         conn.execute(
-            "INSERT INTO events (id, funnel_id, page_id, event_type, value, created_at) VALUES (?, ?, ?, ?, ?, ?)",
-            (eid, funnel_id, page_id, event_type, value, _now()),
+            "INSERT INTO events (id, funnel_id, page_id, event_type, value, created_at, visitor_id) VALUES (?, ?, ?, ?, ?, ?, ?)",
+            (eid, funnel_id, page_id, event_type, value, _now(), visitor_id),
         )
     return {"event_id": eid, "funnel_id": funnel_id, "event_type": event_type}
 
 
 def get_funnel_analytics(funnel_id: str) -> dict:
+    get_funnel(funnel_id)
     with get_conn() as conn:
         rows = conn.execute(
-            "SELECT event_type, COUNT(*) c, COALESCE(SUM(value), 0) total_value FROM events WHERE funnel_id = ? GROUP BY event_type",
+            "SELECT event_type, COUNT(DISTINCT CASE WHEN event_type = 'visit' THEN COALESCE(visitor_id, id) ELSE id END) c, COALESCE(SUM(value), 0) total_value FROM events WHERE funnel_id = ? GROUP BY event_type",
             (funnel_id,),
         ).fetchall()
 
@@ -206,22 +232,74 @@ def get_funnel_analytics(funnel_id: str) -> dict:
 # النشر (توليد صفحات HTML فعلية)
 # ---------------------------------------------------------------------------
 
-def publish_funnel(funnel_id: str, output_dir: str = "generated_sites") -> dict:
-    import os
+def site_root() -> Path:
+    return Path(os.environ.get("FUNNEL_OUTPUT_DIR", Path(__file__).parent / "generated_sites")).resolve()
 
+
+def publish_funnel(funnel_id: str) -> dict:
     funnel = get_funnel(funnel_id)
-    site_dir = os.path.join(os.path.dirname(__file__), output_dir, funnel_id)
-    os.makedirs(site_dir, exist_ok=True)
-
+    if not funnel["pages"]:
+        raise ValueError("أضف صفحة واحدة على الأقل قبل النشر")
+    root = site_root()
+    root.mkdir(parents=True, exist_ok=True)
+    site_dir = root / funnel_id
     generated = []
-    for page in funnel["pages"]:
-        html = render_page_html(funnel["name"], page)
-        file_path = os.path.join(site_dir, f"{page['slug']}.html")
-        with open(file_path, "w", encoding="utf-8") as f:
-            f.write(html)
-        generated.append({"page_id": page["id"], "slug": page["slug"], "file": file_path})
-
+    # Render everything before replacing any live files.
+    with tempfile.TemporaryDirectory(dir=root) as staging:
+        shutil.copyfile(Path(__file__).parent / "funnel.js", Path(staging) / "funnel.js")
+        for index, page in enumerate(funnel["pages"]):
+            if not re.fullmatch(r"[a-zA-Z0-9_-]+", page["slug"]):
+                raise ValueError("slug غير صالح")
+            validate_content(page["type"], page["content"])
+            next_page = funnel["pages"][index + 1] if index + 1 < len(funnel["pages"]) else None
+            next_url = f"{next_page['slug']}.html" if next_page else None
+            html = render_page_html(funnel["name"], page, next_url)
+            Path(staging, f"{page['slug']}.html").write_text(html, encoding="utf-8")
+            generated.append({"page_id": page["id"], "slug": page["slug"], "file": str(site_dir / f"{page['slug']}.html")})
+        site_dir.mkdir(exist_ok=True)
+        for file in Path(staging).iterdir():
+            os.replace(file, site_dir / file.name)
     with get_conn() as conn:
         conn.execute("UPDATE funnels SET status = 'published', updated_at = ? WHERE id = ?", (_now(), funnel_id))
+    return {"funnel_id": funnel_id, "status": "published", "output_dir": str(site_dir),
+            "site_path": f"/sites/{funnel_id}/", "pages": generated,
+            "note": "الرابط يعمل عند تشغيل api_server؛ الملفات وحدها لا تحفظ الاشتراكات"}
 
-    return {"funnel_id": funnel_id, "status": "published", "output_dir": site_dir, "pages": generated}
+
+def submit_lead(funnel_id: str, page_id: str, email: str, visitor_id: str) -> dict:
+    try:
+        normalized = validate_email(email, check_deliverability=False).normalized.casefold()
+    except EmailNotValidError as exc:
+        raise ValueError("البريد الإلكتروني غير صالح") from exc
+    funnel = get_funnel(funnel_id)
+    if funnel["status"] != "published":
+        raise ValueError("الفنل غير منشور")
+    pages = funnel["pages"]
+    index = next((i for i, page in enumerate(pages) if page["id"] == page_id and page["type"] == "optin"), None)
+    if index is None:
+        raise ValueError("صفحة التسجيل غير موجودة في هذا الفنل")
+    if not (site_root() / funnel_id / f"{pages[index]['slug']}.html").is_file():
+        raise ValueError("صفحة التسجيل غير منشورة")
+    with get_conn() as conn:
+        inserted = conn.execute(
+            "INSERT OR IGNORE INTO leads (id, funnel_id, page_id, email, created_at) VALUES (?, ?, ?, ?, ?)",
+            (new_id("lead"), funnel_id, page_id, normalized, _now()),
+        ).rowcount
+        if inserted:
+            conn.execute(
+                "INSERT INTO events (id, funnel_id, page_id, event_type, value, created_at, visitor_id) VALUES (?, ?, ?, 'optin', 0, ?, ?)",
+                (new_id("evt"), funnel_id, page_id, _now(), visitor_id),
+            )
+    next_page = pages[index + 1] if index + 1 < len(pages) else None
+    if next_page and not (site_root() / funnel_id / f"{next_page['slug']}.html").is_file():
+        next_page = None
+    return {"ok": True, "next_url": f"/sites/{funnel_id}/{next_page['slug']}.html" if next_page else None}
+
+
+def list_leads(funnel_id: str, limit: int = 100, offset: int = 0) -> dict:
+    get_funnel(funnel_id)
+    validate({"type": "integer", "minimum": 1, "maximum": 1000}, limit)
+    validate({"type": "integer", "minimum": 0}, offset)
+    with get_conn() as conn:
+        rows = conn.execute("SELECT id, page_id, email, created_at FROM leads WHERE funnel_id = ? ORDER BY created_at, id LIMIT ? OFFSET ?", (funnel_id, limit, offset)).fetchall()
+    return {"funnel_id": funnel_id, "leads": [row_to_dict(row) for row in rows]}

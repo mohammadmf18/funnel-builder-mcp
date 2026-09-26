@@ -6,3 +6,8 @@ venv/
 generated_sites/
 .env
 .DS_Store
+
+.pytest_cache/
+.coverage
+htmlcov/
+connection.json

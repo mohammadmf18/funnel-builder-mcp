@@ -5,7 +5,6 @@ db.py
 """
 
 import sqlite3
-import json
 import os
 import uuid
 from contextlib import contextmanager
@@ -73,14 +72,28 @@ def init_db():
                 funnel_id TEXT NOT NULL REFERENCES funnels(id) ON DELETE CASCADE,
                 page_id TEXT REFERENCES pages(id) ON DELETE SET NULL,
                 event_type TEXT NOT NULL,        -- visit | optin | purchase | upsell_purchase
+                visitor_id TEXT,
                 value REAL DEFAULT 0,
                 created_at TEXT NOT NULL
+            );
+
+            CREATE TABLE IF NOT EXISTS leads (
+                id TEXT PRIMARY KEY,
+                funnel_id TEXT NOT NULL REFERENCES funnels(id) ON DELETE CASCADE,
+                page_id TEXT NOT NULL REFERENCES pages(id) ON DELETE CASCADE,
+                email TEXT NOT NULL,
+                created_at TEXT NOT NULL,
+                UNIQUE(funnel_id, email)
             );
 
             CREATE INDEX IF NOT EXISTS idx_pages_funnel ON pages(funnel_id);
             CREATE INDEX IF NOT EXISTS idx_events_funnel ON events(funnel_id);
             """
         )
+        # Upgrade databases created before visitor tracking was introduced.
+        columns = {row["name"] for row in conn.execute("PRAGMA table_info(events)")}
+        if "visitor_id" not in columns:
+            conn.execute("ALTER TABLE events ADD COLUMN visitor_id TEXT")
 
 
 def row_to_dict(row: sqlite3.Row) -> dict:

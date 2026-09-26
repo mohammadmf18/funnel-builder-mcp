@@ -8,6 +8,8 @@ schemas.py
 """
 
 import core
+from copy import deepcopy
+from validation import validate, TEXT, PRICE, CURRENCY, EMAILS
 
 # كل أداة: name, description, parameters (JSON Schema), func (الدالة الفعلية في core.py)
 TOOLS = [
@@ -92,7 +94,7 @@ TOOLS = [
                 "price": {"type": "number"},
                 "currency": {"type": "string", "default": "SAR"},
             },
-            "required": ["funnel_id", "headline", "price"],
+            "required": ["funnel_id", "headline", "benefits", "price"],
         },
         "func": core.add_sales_page,
     },
@@ -157,7 +159,7 @@ TOOLS = [
     },
     {
         "name": "connect_email_sequence",
-        "description": "يربط تسلسل رسائل إيميل آلي (Email Sequence) بالفنل، يُرسل للمشتركين الجدد.",
+        "description": "يحفظ مسودة تسلسل إيميلات للفنل. لا يرسل أو يجدول رسائل؛ يلزم تكامل مع مزود إرسال.",
         "parameters": {
             "type": "object",
             "properties": {
@@ -210,6 +212,35 @@ TOOLS = [
     },
 ]
 
+TOOLS.append({
+    "name": "list_leads",
+    "description": "يعرض المشتركين المحفوظين في فنل، مع دعم التقسيم إلى صفحات.",
+    "parameters": {"type": "object", "properties": {
+        "funnel_id": {"type": "string"},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 1000, "default": 100},
+        "offset": {"type": "integer", "minimum": 0, "default": 0},
+    }, "required": ["funnel_id"]},
+    "func": core.list_leads,
+})
+
+# This exact schema is exposed by both MCP and OpenAI and enforced before execution.
+for tool in TOOLS:
+    parameters = tool["parameters"]
+    parameters["additionalProperties"] = False
+    for name, prop in parameters.get("properties", {}).items():
+        if prop.get("type") == "string":
+            prop.setdefault("maxLength", 10000)
+        if name in {"funnel_id", "page_id"}:
+            prop["pattern"] = "^" + ("funnel" if name == "funnel_id" else "page") + "_[0-9a-f]{12}$"
+        elif name in {"price", "value"}:
+            prop.update(PRICE)
+        elif name == "currency":
+            prop.update(CURRENCY)
+    if tool["name"] in {"add_checkout_page", "add_upsell_page"}:
+        parameters["properties"]["checkout_url"] = {**TEXT, "description": "رابط دفع HTTPS خارجي. تركه فارغًا يعطّل زر الدفع."}
+    if tool["name"] == "connect_email_sequence":
+        parameters["properties"]["emails"].update(deepcopy(EMAILS))
+
 TOOLS_BY_NAME = {t["name"]: t for t in TOOLS}
 
 
@@ -221,7 +252,7 @@ def to_openai_functions() -> list:
             "function": {
                 "name": t["name"],
                 "description": t["description"],
-                "parameters": t["parameters"],
+                "parameters": deepcopy(t["parameters"]),
             },
         }
         for t in TOOLS
@@ -232,4 +263,6 @@ def call_tool(name: str, arguments: dict):
     """منفذ عام يستدعي أي أداة بالاسم — تستخدمه طبقتا MCP و OpenAI API."""
     if name not in TOOLS_BY_NAME:
         raise ValueError(f"أداة غير معروفة: {name}")
-    return TOOLS_BY_NAME[name]["func"](**arguments)
+    tool = TOOLS_BY_NAME[name]
+    validate(tool["parameters"], arguments)
+    return tool["func"](**arguments)
