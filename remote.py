@@ -27,7 +27,7 @@ def request(path: str, payload=None):
     if not isinstance(key, str) or not key:
         raise ValueError('Hosted connection is missing its management key')
     body = json.dumps(payload, ensure_ascii=False).encode() if payload is not None else None
-    req = Request(url + path, data=body, headers={'Authorization': f'Bearer {key}', 'Content-Type': 'application/json'})
+    req = Request(url + path, data=body, headers={'Authorization': f'Bearer {key}', 'Content-Type': 'application/json', 'User-Agent': 'funnel-builder-mcp/1.1'})
     try:
         with build_opener(NoRedirect()).open(req, timeout=30) as response:
             raw = response.read(8 * 1024 * 1024 + 1)
