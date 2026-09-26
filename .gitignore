@@ -10,3 +10,4 @@ generated_sites/
 .pytest_cache/
 .coverage
 htmlcov/
+connection.json
