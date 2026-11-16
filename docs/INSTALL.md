@@ -1,48 +1,36 @@
-# Install AI Sales Funnel Builder Skill
+# AI Sales Funnel Builder — MCP Setup
 
-## Prerequisites
-Python 3.10+, pip, Git, and an MCP-compatible desktop coding assistant.
+## Requirements
+Python 3.10+, Git, and an AI agent that supports **local stdio MCP servers**. Agensi distributes the SKILL instructions only; it does not run the MCP server.
 
+## Install the tested source branch
 ```bash
-git clone https://github.com/mohammadmf18/funnel-builder-mcp.git
+git clone --branch feature/ai-sales-funnel-builder-skill https://github.com/mohammadmf18/funnel-builder-mcp.git
 cd funnel-builder-mcp
 python -m venv .venv
-# macOS / Linux
+# macOS/Linux:
 source .venv/bin/activate
-# Windows (PowerShell): .venv\Scripts\Activate.ps1
+# Windows PowerShell: .venv\Scripts\Activate.ps1
 python -m pip install -r requirements.txt
 ```
 
-## MCP configuration
-Replace both paths with absolute paths on your computer.
+## Configure a local MCP client
+Copy `mcp_config.example.json` as a reference and replace all absolute paths (including the Python executable). Do not use literal placeholder paths. Paste the `mcpServers` entry into your agent's MCP configuration. In Claude Desktop restart the app after saving. For other clients follow the local stdio server configuration instructions. This config does **not** automatically install from Agensi.
 
-```json
-{
-  "mcpServers": {
-    "funnel-builder": {
-      "command": "/ABSOLUTE/PATH/funnel-builder-mcp/.venv/bin/python",
-      "args": ["/ABSOLUTE/PATH/funnel-builder-mcp/mcp_server.py"],
-      "env": {"FUNNEL_DB_PATH": "/ABSOLUTE/PATH/funnel-builder-mcp/funnels.db"}
-    }
-  }
-}
-```
+## Use the skill
+Connect your agent to Agensi, authorize loading the AI Sales Funnel Builder Skill, and separately connect the local Funnel Builder MCP server. Then ask:
 
-On Windows use the Python executable inside `.venv\\Scripts\\python.exe` with escaped backslashes or forward slashes in the JSON.
+> Create a lead-generation funnel for a beginner photography ebook, add a landing page and opt-in page, include a thank-you page, and export static HTML drafts.
 
-For Claude Desktop, add the entry under `mcpServers` in your configuration and restart the app. For other MCP clients, use their local stdio MCP-server setup UI and point to the same executable/script.
+Check tool calls with `get_funnel` and `publish_funnel`. The outputs are prototypes. Forms and payment links aren't live; do not collect payment details or real customer data.
 
-## Agent skill
-Copy `SKILL.md` into your agent's supported skills directory following that agent's current instructions. The SKILL file **does not automatically configure MCP**; install and authorize the server separately.
-
-## Try it
-Prompt: "Create a three-page lead-generation funnel for an online design course." Check the resulting funnel with `get_funnel`. Export local HTML with `publish_funnel`. Pages are **static prototypes**: forms, payment buttons, and email automation require external integrations.
-
-## Developer checks
+## Tests for developers
 ```bash
 python -m unittest discover -s tests -v
-python -m compileall -q .
+python tests/mcp_stdio_smoke.py
 ```
 
-## Data privacy
-Everything is stored locally in SQLite unless you explicitly configure an external service. Back up `funnels.db`; do not commit private customer data or secrets.
+## Security
+Keep your server local to your machine. The REST interface (if enabled) requires `FUNNEL_API_KEY` and `X-API-Key`, and should never be exposed publicly without additional hardening. Funnel data is saved in local SQLite.
+
+Source code: https://github.com/mohammadmf18/funnel-builder-mcp
