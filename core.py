@@ -5,6 +5,8 @@ core.py
 """
 
 import json
+import re
+from pathlib import Path
 from typing import Optional
 
 from db import get_conn, init_db, new_id, row_to_dict, _now
@@ -207,21 +209,24 @@ def get_funnel_analytics(funnel_id: str) -> dict:
 # ---------------------------------------------------------------------------
 
 def publish_funnel(funnel_id: str, output_dir: str = "generated_sites") -> dict:
-    import os
-
     funnel = get_funnel(funnel_id)
-    site_dir = os.path.join(os.path.dirname(__file__), output_dir, funnel_id)
-    os.makedirs(site_dir, exist_ok=True)
+    # Export only generated, safe filenames to the chosen directory.
+    if not re.fullmatch(r"funnel_[a-f0-9]{12}", funnel_id):
+        raise ValueError("Invalid funnel ID")
+    site_dir = Path(output_dir).resolve() / funnel_id
+    site_dir.mkdir(parents=True, exist_ok=True)
 
     generated = []
     for page in funnel["pages"]:
         html = render_page_html(funnel["name"], page)
-        file_path = os.path.join(site_dir, f"{page['slug']}.html")
-        with open(file_path, "w", encoding="utf-8") as f:
+        if not re.fullmatch(r"[a-zA-Z0-9_-]{1,80}", page["slug"]):
+            raise ValueError("Invalid page slug")
+        file_path = site_dir / f"{page['slug']}.html"
+        with file_path.open("w", encoding="utf-8") as f:
             f.write(html)
-        generated.append({"page_id": page["id"], "slug": page["slug"], "file": file_path})
+        generated.append({"page_id": page["id"], "slug": page["slug"], "file": str(file_path)})
 
     with get_conn() as conn:
         conn.execute("UPDATE funnels SET status = 'published', updated_at = ? WHERE id = ?", (_now(), funnel_id))
 
-    return {"funnel_id": funnel_id, "status": "published", "output_dir": site_dir, "pages": generated}
+    return {"funnel_id": funnel_id, "status": "published", "output_dir": str(site_dir), "pages": generated}
