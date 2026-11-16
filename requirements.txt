@@ -1,4 +1,4 @@
-mcp>=1.0.0  # يدعم النسخة v1 (FastMCP) والنسخة v2 (MCPServer) تلقائيًا
+mcp>=1.18,<2  # FastMCP v1 API; v2 migration tracked separately
 fastapi>=0.110.0
 uvicorn>=0.29.0
 pydantic>=2.6.0

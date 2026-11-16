@@ -1,0 +1,13 @@
+{
+  "mcpServers": {
+    "funnel-builder": {
+      "command": "/ABSOLUTE/PATH/funnel-builder-mcp/.venv/bin/python",
+      "args": [
+        "/ABSOLUTE/PATH/funnel-builder-mcp/mcp_server.py"
+      ],
+      "env": {
+        "FUNNEL_DB_PATH": "/ABSOLUTE/PATH/funnel-builder-mcp/funnels.db"
+      }
+    }
+  }
+}

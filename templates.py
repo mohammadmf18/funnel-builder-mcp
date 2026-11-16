@@ -1,72 +1,38 @@
-"""
-templates.py
-مولّد HTML بسيط لكل نوع صفحة داخل الفنل. بدون أي اعتماديات خارجية.
-"""
+"""Simple, escaped static HTML prototypes for funnel pages."""
+from html import escape
 
 BASE_STYLE = """
 <style>
-  body { font-family: -apple-system, Tahoma, Arial, sans-serif; max-width: 720px; margin: 60px auto; padding: 0 20px; background:#fafafa; color:#1a1a1a; direction: rtl; text-align: right; }
-  h1 { font-size: 2rem; margin-bottom: .3em; }
-  .sub { color:#555; font-size: 1.1rem; margin-bottom: 1.5em; }
-  .cta { display:inline-block; padding: 14px 28px; background:#111; color:#fff; text-decoration:none; border-radius: 8px; font-weight:bold; }
-  .price { font-size: 1.8rem; font-weight:bold; margin: 1em 0; }
-  ul { line-height: 1.9; }
-  .card { background:#fff; padding: 30px; border-radius: 12px; box-shadow: 0 1px 6px rgba(0,0,0,.06); }
+body {font-family:system-ui,Tahoma,Arial,sans-serif;max-width:760px;margin:56px auto;padding:0 20px;background:#f5f6fa;color:#171923;direction:rtl;text-align:right}
+.card{background:white;padding:32px;border-radius:16px;box-shadow:0 5px 25px #10182812}
+h1{font-size:2rem} .sub{color:#475467;line-height:1.7}.cta{display:inline-block;padding:13px 22px;background:#4338ca;color:white;border-radius:9px;text-decoration:none;font-weight:700}
+.price{font-size:1.6rem;font-weight:700;margin:22px 0} li{margin:8px 0}
+input{padding:11px;max-width:100%;border:1px solid #ccc;border-radius:8px}
+.notice{background:#fff7ed;padding:12px;border-radius:8px;color:#9a3412;font-size:.9rem}
 </style>
 """
 
+def clean(value):
+    return escape(str(value if value is not None else ""), quote=True)
 
-def _wrap(title: str, body: str) -> str:
-    return f"""<!DOCTYPE html>
-<html lang="ar"><head><meta charset="utf-8"><title>{title}</title>{BASE_STYLE}</head>
-<body><div class="card">{body}</div></body></html>"""
+def _wrap(title, body):
+    return f'<!doctype html><html lang="ar" dir="rtl"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width, initial-scale=1"><title>{clean(title)}</title>{BASE_STYLE}</head><body><main class="card">{body}</main></body></html>'
 
-
-def render_page_html(funnel_name: str, page: dict) -> str:
+def render_page_html(funnel_name, page):
     ptype = page["type"]
-    content = page.get("content", {})
-    headline = page.get("headline") or funnel_name
-
+    c = page.get("content") or {}
+    headline = clean(page.get("headline") or funnel_name)
     if ptype == "landing":
-        body = f"""
-        <h1>{headline}</h1>
-        <p class="sub">{content.get('subheadline','')}</p>
-        <a class="cta" href="#">{content.get('cta_text','ابدأ الآن')}</a>
-        """
+        body = f'<h1>{headline}</h1><p class="sub">{clean(c.get("subheadline"))}</p><a class="cta" href="optin.html">{clean(c.get("cta_text") or "ابدأ الآن")}</a>'
     elif ptype == "optin":
-        body = f"""
-        <h1>{headline}</h1>
-        <p class="sub">{content.get('offer_description','')}</p>
-        <p><strong>{content.get('incentive','')}</strong></p>
-        <input type="email" placeholder="بريدك الإلكتروني" style="padding:10px;width:100%;margin-bottom:10px;border-radius:6px;border:1px solid #ccc">
-        <a class="cta" href="#">احصل عليه الآن</a>
-        """
+        body = f'<h1>{headline}</h1><p class="sub">{clean(c.get("offer_description"))}</p><p>{clean(c.get("incentive"))}</p><label>البريد الإلكتروني <input type="email" disabled placeholder="example@email.com"></label><p class="notice">نموذج تجريبي: ربط جمع الإيميلات غير متوفر.</p>'
     elif ptype == "sales":
-        benefits = "".join(f"<li>{b}</li>" for b in content.get("benefits", []))
-        body = f"""
-        <h1>{headline}</h1>
-        <ul>{benefits}</ul>
-        <div class="price">{content.get('price','')} {content.get('currency','')}</div>
-        <a class="cta" href="#">اشترِ الآن</a>
-        """
+        benefits = "".join(f'<li>{clean(x)}</li>' for x in (c.get("benefits") or []))
+        body = f'<h1>{headline}</h1><ul>{benefits}</ul><div class="price">{clean(c.get("price"))} {clean(c.get("currency"))}</div><a class="cta" href="checkout.html">عرض صفحة الدفع التجريبية</a>'
     elif ptype == "checkout":
-        body = f"""
-        <h1>{headline}</h1>
-        <div class="price">{content.get('price','')} {content.get('currency','')}</div>
-        <p>أدخل بيانات الدفع لإتمام الطلب.</p>
-        <a class="cta" href="#">تأكيد الدفع</a>
-        """
+        body = f'<h1>{headline}</h1><div class="price">{clean(c.get("price"))} {clean(c.get("currency"))}</div><p class="notice">صفحة توضيحية فقط؛ لا توجد معالجة مدفوعات.</p>'
     elif ptype == "upsell":
-        body = f"""
-        <h1>{headline}</h1>
-        <p class="sub">عرض لمرة واحدة فقط بعد الشراء</p>
-        <div class="price">{content.get('price','')} {content.get('currency','')}</div>
-        <a class="cta" href="#">نعم، أضفه لطلبي</a>
-        """
-    else:  # thankyou
-        body = f"""
-        <h1>{headline}</h1>
-        <p class="sub">{content.get('message','نشكرك على ثقتك.')}</p>
-        """
-
-    return _wrap(headline, body)
+        body = f'<h1>{headline}</h1><div class="price">{clean(c.get("price"))} {clean(c.get("currency"))}</div><p class="notice">عرض إضافي تجريبي؛ لا يمكن الشراء من هذه الصفحة.</p>'
+    else:
+        body = f'<h1>{headline}</h1><p class="sub">{clean(c.get("message") or "نشكرك على ثقتك.")}</p>'
+    return _wrap(page.get("headline") or funnel_name, body)

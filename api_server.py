@@ -1,48 +1,39 @@
+"""Local REST API for AI Sales Funnel Builder.
+Bind only to loopback by default. No public authentication is implemented.
 """
-api_server.py
-REST API يعرض نفس أدوات الفنل بيلدر، بصيغة متوافقة مع OpenAI Function Calling.
-يصلح لأي نموذج ذكاء اصطناعي يدعم استدعاء أدوات عبر HTTP (GPT، Gemini، نماذج محلية...).
-
-تشغيل محلي:
-    uvicorn api_server:app --reload --port 8000
-
-نقاط الوصول:
-    GET  /tools                -> قائمة الأدوات بصيغة OpenAI functions
-    POST /tools/call           -> تنفيذ أداة معينة {"name": "...", "arguments": {...}}
-    GET  /health                -> فحص الحالة
-"""
-
-from fastapi import FastAPI, HTTPException
-from pydantic import BaseModel
-from typing import Any, Dict
-
+import os
+import secrets
+from typing import Any
+from fastapi import FastAPI, HTTPException, Header
+from pydantic import BaseModel, Field
 import schemas
 
-app = FastAPI(title="Funnel Builder API", version="1.0.0")
-
+app = FastAPI(title="AI Sales Funnel Builder API", version="1.1.0")
 
 class ToolCall(BaseModel):
     name: str
-    arguments: Dict[str, Any] = {}
+    arguments: dict[str, Any] = Field(default_factory=dict)
 
+def _authorized(key: str | None):
+    expected = os.environ.get("FUNNEL_API_KEY")
+    if not expected or not key or not secrets.compare_digest(expected, key):
+        raise HTTPException(status_code=401, detail="Set FUNNEL_API_KEY and supply X-API-Key")
 
 @app.get("/health")
 def health():
     return {"status": "ok"}
 
-
 @app.get("/tools")
-def get_tools():
-    """يرجّع تعريفات الأدوات بصيغة OpenAI Function Calling الجاهزة للاستخدام مباشرة."""
+def get_tools(x_api_key: str | None = Header(default=None)):
+    _authorized(x_api_key)
     return {"tools": schemas.to_openai_functions()}
 
-
 @app.post("/tools/call")
-def call_tool(call: ToolCall):
+def call_tool(call: ToolCall, x_api_key: str | None = Header(default=None)):
+    _authorized(x_api_key)
     try:
-        result = schemas.call_tool(call.name, call.arguments)
-        return {"result": result}
-    except ValueError as e:
-        raise HTTPException(status_code=400, detail=str(e))
-    except TypeError as e:
-        raise HTTPException(status_code=422, detail=f"مدخلات غير صحيحة: {e}")
+        return {"result": schemas.call_tool(call.name, call.arguments)}
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except TypeError as exc:
+        raise HTTPException(status_code=422, detail="Invalid tool arguments")

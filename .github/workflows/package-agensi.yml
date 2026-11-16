@@ -1,0 +1,48 @@
+name: Package Agensi Skill
+on:
+  push:
+    branches:
+      - feature/ai-sales-funnel-builder-skill
+  workflow_dispatch:
+jobs:
+  package:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Validate and build marketplace ZIP
+        shell: bash
+        run: |
+          python - <<'PY'
+          from pathlib import Path
+          from zipfile import ZipFile, ZIP_DEFLATED
+          import re
+
+          root = Path('.')
+          files = [
+              'SKILL.md',
+              'mcp_config.example.json',
+              'docs/INSTALL.md',
+              'docs/EXAMPLE_PROMPTS.md',
+          ]
+          skill = (root / 'SKILL.md').read_text(encoding='utf-8')
+          assert skill.startswith('---\n')
+          front = skill.split('---', 2)[1]
+          assert re.search(r'^name:\s*ai-sales-funnel-builder\s*$', front, re.M)
+          assert re.search(r'^description:\s*\S+', front, re.M)
+          for f in files:
+              assert (root / f).is_file(), f"Missing {f}"
+          output = Path('ai-sales-funnel-builder-agensi.zip')
+          with ZipFile(output, 'w', ZIP_DEFLATED) as z:
+              for f in files:
+                  z.write(f, f)
+          with ZipFile(output) as z:
+              assert z.testzip() is None
+              assert 'SKILL.md' in z.namelist()
+              print("Validated Agensi ZIP contents:", ', '.join(z.namelist()))
+              print("ZIP size:", output.stat().st_size, "bytes")
+          PY
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ai-sales-funnel-builder-agensi-zip
+          path: ai-sales-funnel-builder-agensi.zip
+          if-no-files-found: error
